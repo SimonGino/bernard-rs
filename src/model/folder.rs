@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use crate::database::{Connection, Pool};
 use futures::prelude::*;
 use sqlx::Result;
-use tracing::trace;
+use tracing::{trace};
 
 #[derive(Debug)]
 pub struct Folder {
@@ -27,24 +28,39 @@ impl Folder {
             self.trashed,
             self.parent,
         )
-        .execute(conn)
-        .await?;
+            .execute(conn)
+            .await?;
 
         trace!(id = %self.id, "created folder");
         Ok(())
     }
 
+    pub(crate) async fn get_all(drive_id: &str, conn: &mut Connection) -> Result<Vec<Folder>> {
+        let rows = sqlx::query_as!(
+            Folder,
+            r#"
+            SELECT id, drive_id, name, trashed, parent
+            FROM folders
+            WHERE drive_id = $1
+            "#,
+            drive_id
+        )
+            .fetch_all(conn)
+            .await?;
+
+        trace!(drive_id = %drive_id, count = %rows.len(), "fetched all folders");
+        Ok(rows)
+    }
+
     pub(crate) async fn upsert(&self, conn: &mut Connection) -> Result<()> {
         sqlx::query!(
             "
-            INSERT INTO folders
-                (id, drive_id, name, trashed, parent)
-            VALUES
-                ($1, $2, $3, $4, $5)
-            ON CONFLICT (id, drive_id) DO UPDATE SET
-                name = EXCLUDED.name,
-                trashed = EXCLUDED.trashed,
-                parent = EXCLUDED.parent
+             UPDATE folders
+        SET
+            name = $3,
+            trashed = $4,
+            parent = $5
+        WHERE id = $1 AND drive_id = $2
             ",
             self.id,
             self.drive_id,
@@ -52,8 +68,8 @@ impl Folder {
             self.trashed,
             self.parent,
         )
-        .execute(conn)
-        .await?;
+            .execute(conn)
+            .await?;
 
         trace!(id = %self.id, "upserted folder");
         Ok(())
@@ -65,8 +81,8 @@ impl Folder {
             id,
             drive_id
         )
-        .execute(conn)
-        .await?;
+            .execute(conn)
+            .await?;
 
         trace!(id = %id, "deleted folder");
         Ok(())
@@ -84,12 +100,29 @@ impl Folder {
             drive_id,
             name
         )
-        .execute(conn)
-        .await?;
+            .execute(conn)
+            .await?;
 
         trace!(id = %id, "updated folder name to {}", name);
         Ok(())
     }
+
+    pub(crate) async fn get_all_ids(drive_id: &str, conn: &mut Connection) -> Result<HashSet<String>> {
+        let rows = sqlx::query!(
+            "SELECT id FROM folders WHERE drive_id = $1",
+            drive_id
+        )
+            .fetch_all(conn)
+            .await?;
+
+        let ids: HashSet<String> = rows.into_iter().map(|row| row.id).collect();
+
+        trace!(drive_id = %drive_id, count = %ids.len(), "fetched all folder ids");
+        Ok(ids)
+    }
+
+
+
 }
 
 #[derive(Debug)]
@@ -140,11 +173,11 @@ impl ChangedFolder {
             "SELECT * FROM folder_changelog WHERE drive_id = $1",
             drive_id
         )
-        .fetch(pool)
-        // Turn the FolderChangelog into a ChangedFolder
-        .map_ok(|f| f.into())
-        .try_collect()
-        .await
+            .fetch(pool)
+            // Turn the FolderChangelog into a ChangedFolder
+            .map_ok(|f| f.into())
+            .try_collect()
+            .await
     }
 
     pub(crate) async fn clear(drive_id: &str, pool: &Pool) -> Result<()> {
