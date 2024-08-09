@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use crate::database::{Connection, Pool};
 use futures::prelude::*;
 use sqlx::Result;
-use tracing::trace;
+use tracing::{trace};
 
 #[derive(Debug)]
 pub struct File {
@@ -31,39 +32,36 @@ impl File {
             self.md5,
             self.size
         )
-        .execute(conn)
-        .await?;
+            .execute(conn)
+            .await?;
 
         trace!(id = %self.id, "created file");
         Ok(())
     }
-
     pub(crate) async fn upsert(&self, conn: &mut Connection) -> Result<()> {
         sqlx::query!(
-            "
-            INSERT INTO files
-                (id, drive_id, name, trashed, parent, md5, size)
-            VALUES
-                ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (id, drive_id) DO UPDATE SET
-                name = EXCLUDED.name,
-                trashed = EXCLUDED.trashed,
-                parent = EXCLUDED.parent,
-                md5 = EXCLUDED.md5,
-                size = EXCLUDED.size
-            ",
-            self.id,
-            self.drive_id,
-            self.name,
-            self.trashed,
-            self.parent,
-            self.md5,
-            self.size
-        )
-        .execute(conn)
-        .await?;
+        "
+        UPDATE files
+        SET
+            name = $3,
+            trashed = $4,
+            parent = $5,
+            md5 = $6,
+            size = $7
+        WHERE id = $1 AND drive_id = $2
+        ",
+        self.id,
+        self.drive_id,
+        self.name,
+        self.trashed,
+        self.parent,
+        self.md5,
+        self.size
+    )
+            .execute(conn)
+            .await?;
 
-        trace!(id = %self.id, "upserted file");
+        trace!(id = %self.id, "updated file");
         Ok(())
     }
 
@@ -73,11 +71,42 @@ impl File {
             id,
             drive_id
         )
-        .execute(conn)
-        .await?;
+            .execute(conn)
+            .await?;
 
         trace!(id = %id, "deleted file");
         Ok(())
+    }
+
+    pub(crate) async fn get_all_ids(drive_id: &str, conn: &mut Connection) -> Result<HashSet<String>> {
+        let rows = sqlx::query!(
+            "SELECT id FROM files WHERE drive_id = $1",
+            drive_id
+        )
+            .fetch_all(conn)
+            .await?;
+
+        let ids: HashSet<String> = rows.into_iter().map(|row| row.id).collect();
+
+        trace!(drive_id = %drive_id, count = %ids.len(), "fetched all file ids");
+        Ok(ids)
+    }
+
+    pub(crate) async fn get_all(drive_id: &str, conn: &mut Connection) -> Result<Vec<File>> {
+        let rows = sqlx::query_as!(
+            File,
+            r#"
+            SELECT id, drive_id, name, trashed, parent, md5, size
+            FROM files
+            WHERE drive_id = $1
+            "#,
+            drive_id
+        )
+            .fetch_all(conn)
+            .await?;
+
+        trace!(drive_id = %drive_id, count = %rows.len(), "fetched all files");
+        Ok(rows)
     }
 }
 
@@ -133,11 +162,11 @@ impl ChangedFile {
             "SELECT * FROM file_changelog WHERE drive_id = $1",
             drive_id
         )
-        .fetch(pool)
-        // Turn the FileChangelog into a ChangedFile
-        .map_ok(|f| f.into())
-        .try_collect()
-        .await
+            .fetch(pool)
+            // Turn the FileChangelog into a ChangedFile
+            .map_ok(|f| f.into())
+            .try_collect()
+            .await
     }
 
     pub(crate) async fn clear(drive_id: &str, pool: &Pool) -> Result<()> {
