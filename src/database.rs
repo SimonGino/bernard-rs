@@ -40,6 +40,26 @@ async fn delete_file_or_folder(
     Ok(())
 }
 
+// 新的删除文件函数
+pub async fn delete_file(
+    id: &str,
+    drive_id: &str,
+    conn: &mut Connection,
+) -> sqlx::Result<()> {
+    File::delete(id, drive_id, conn).await?;
+    Ok(())
+}
+
+// 新的删除文件夹函数
+pub async fn delete_folder(
+    id: &str,
+    drive_id: &str,
+    conn: &mut Connection,
+) -> sqlx::Result<()> {
+    Folder::delete(id, drive_id, conn).await?;
+    Ok(())
+}
+
 fn item_to_change(drive_id: &str, item: Item) -> Change {
     match item.drive_id() == drive_id {
         true => Change::ItemChanged(item),
@@ -173,10 +193,10 @@ where
                         file_ids.remove(descendant_id);
                     }
 
-                    delete_file_or_folder(&id, drive_id, &mut tx).await?;
+                    delete_folder(&id, drive_id, &mut tx).await?;
                     debug!("Removed folder ID {}", id);
                 } else if file_ids.remove(&id) {
-                    delete_file_or_folder(&id, drive_id, &mut tx).await?;
+                    delete_file(&id, drive_id, &mut tx).await?;
                     debug!("Removed file ID {}", id);
                 } else {
                     warn!("Item ID {} not found for deletion", id);
