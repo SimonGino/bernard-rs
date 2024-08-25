@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use crate::database::{Connection, Pool};
 use futures::prelude::*;
 use sqlx::Result;
@@ -33,23 +32,6 @@ impl Folder {
 
         trace!(id = %self.id, "created folder");
         Ok(())
-    }
-
-    pub(crate) async fn get_all(drive_id: &str, conn: &mut Connection) -> Result<Vec<Folder>> {
-        let rows = sqlx::query_as!(
-            Folder,
-            r#"
-            SELECT id, drive_id, name, trashed, parent
-            FROM folders
-            WHERE drive_id = $1
-            "#,
-            drive_id
-        )
-            .fetch_all(conn)
-            .await?;
-
-        trace!(drive_id = %drive_id, count = %rows.len(), "fetched all folders");
-        Ok(rows)
     }
 
     pub(crate) async fn upsert(&self, conn: &mut Connection) -> Result<()> {
@@ -136,22 +118,6 @@ impl Folder {
         trace!(id = %id, "updated folder name to {}", name);
         Ok(())
     }
-
-    pub(crate) async fn get_all_ids(drive_id: &str, conn: &mut Connection) -> Result<HashSet<String>> {
-        let rows = sqlx::query!(
-            "SELECT id FROM folders WHERE drive_id = $1",
-            drive_id
-        )
-            .fetch_all(conn)
-            .await?;
-
-        let ids: HashSet<String> = rows.into_iter().map(|row| row.id).collect();
-
-        trace!(drive_id = %drive_id, count = %ids.len(), "fetched all folder ids");
-        Ok(ids)
-    }
-
-
 
 }
 

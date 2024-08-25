@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use crate::database::{Connection, Pool};
 use futures::prelude::*;
 use sqlx::Result;
@@ -78,37 +77,6 @@ impl File {
 
         trace!(id = %id, "deleted file");
         Ok(())
-    }
-
-    pub(crate) async fn get_all_ids(drive_id: &str, conn: &mut Connection) -> Result<HashSet<String>> {
-        let rows = sqlx::query!(
-            "SELECT id FROM files WHERE drive_id = $1",
-            drive_id
-        )
-            .fetch_all(conn)
-            .await?;
-
-        let ids: HashSet<String> = rows.into_iter().map(|row| row.id).collect();
-
-        trace!(drive_id = %drive_id, count = %ids.len(), "fetched all file ids");
-        Ok(ids)
-    }
-
-    pub(crate) async fn get_all(drive_id: &str, conn: &mut Connection) -> Result<Vec<File>> {
-        let rows = sqlx::query_as!(
-            File,
-            r#"
-            SELECT id, drive_id, name, trashed, parent, md5, size
-            FROM files
-            WHERE drive_id = $1
-            "#,
-            drive_id
-        )
-            .fetch_all(conn)
-            .await?;
-
-        trace!(drive_id = %drive_id, count = %rows.len(), "fetched all files");
-        Ok(rows)
     }
 }
 

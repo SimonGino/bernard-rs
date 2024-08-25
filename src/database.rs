@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use sqlx::{Sqlite, Transaction};
+use std::collections::{HashMap, HashSet};
 use crate::fetch::{Change, Item};
 use crate::model::{ChangedFile, ChangedFolder, ChangedPath, Drive, File, Folder};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection, SqlitePool, SqlitePoolOptions};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, trace, warn};
 
 pub(crate) type Connection = SqliteConnection;
 
@@ -132,9 +131,6 @@ pub async fn add_drive(
     // Create the drive
     Drive::create(drive_id, page_token, &mut tx).await?;
 
-    // Separate folders and files
-    let (folders, files): (Vec<_>, Vec<_>) = items.into_iter().partition(|item| matches!(item, Item::Folder(_)));
-
     // Create the root folder
     let root_folder = Folder {
         id: drive_id.to_owned(),
@@ -145,101 +141,70 @@ pub async fn add_drive(
     };
     root_folder.create(&mut tx).await?;
 
-    // Create a map of parent_id to vec of child folders
-    let mut folder_map: HashMap<Option<String>, Vec<Folder>> = HashMap::new();
-    for item in folders {
-        if let Item::Folder(folder) = item {
-            folder_map.entry(folder.parent.clone()).or_default().push(folder);
+    // Separate folders and files, and create maps
+    let mut folders: HashMap<String, Folder> = HashMap::new();
+    let mut files: Vec<File> = Vec::new();
+
+    for item in items {
+        match item {
+            Item::Folder(folder) => {
+                folders.insert(folder.id.clone(), folder);
+            },
+            Item::File(file) => {
+                files.push(file);
+            }
         }
     }
-    // 打印 folder_map 的值
-    debug!("folder_map: {:?}", folder_map);
 
-    // Process folders in level order
-    if let Err(e) = process_folders(&mut tx, drive_id, &folder_map, root_folder.id.clone()).await {
-        tx.rollback().await?;
-        return Err(e);
+    // Process folders
+    let mut processed_folders: HashSet<String> = HashSet::new();
+    processed_folders.insert(drive_id.to_string());
+
+    let mut orphaned_folders = Vec::new();
+
+    while !folders.is_empty() {
+        let mut progress = false;
+        let mut folders_to_remove = Vec::new();
+
+        for (id, folder) in &folders {
+            if processed_folders.contains(folder.parent.as_ref().unwrap_or(&drive_id.to_string())) {
+                folder.create(&mut tx).await?;
+                processed_folders.insert(id.clone());
+                folders_to_remove.push(id.clone());
+                progress = true;
+            }
+        }
+
+        // 移除已处理的文件夹
+        for id in &folders_to_remove {
+            folders.remove(id);
+        }
+
+        // 如果没有进展，那么剩下的都是孤立文件夹
+        if !progress {
+            orphaned_folders.extend(folders.keys().cloned());
+            break;
+        }
     }
 
-    // Insert all files
-    if let Err(e) = insert_files(&mut tx, &files, &folder_map).await {
-        tx.rollback().await?;
-        return Err(e);
+    if !orphaned_folders.is_empty() {
+        error!("Orphaned folders detected: {:?}", orphaned_folders);
+        warn!("Continuing processing despite orphaned folders");
+    }
+
+
+    // Process files
+    for file in files {
+        if processed_folders.contains(&file.parent) {
+            file.create(&mut tx).await?;
+        } else {
+            warn!("Parent folder {} not found for file {}, skipping", file.parent, file.id);
+        }
     }
 
     // Commit the transaction
     tx.commit().await
 }
-
-async fn process_folders(
-    tx: &mut Transaction<'_, Sqlite>,
-    drive_id: &str,
-    folder_map: &HashMap<Option<String>, Vec<Folder>>,
-    // 将 root_folder.id 作为参数传递
-    root_folder_id: String,
-) -> sqlx::Result<()>
-{
-    let mut queue = VecDeque::new();
-    queue.push_back(Some(root_folder_id));
-    let mut folder_ids = HashSet::new();
-    folder_ids.insert(drive_id.to_string());
-
-    while let Some(parent) = queue.pop_front() {
-        if let Some(children) = folder_map.get(&parent) {
-            for folder in children {
-                if parent.is_some() && !folder_ids.contains(parent.as_ref().unwrap()) {
-                    warn!(
-                        "Parent folder ID {} not found for new folder ID {}, skipping insertion",
-                        parent.as_ref().unwrap(),
-                        folder.id
-                    );
-                    continue;
-                }
-                match folder.create(tx).await {
-                    Ok(_) => {
-                        trace!("Created folder: {}", folder.id);
-                        folder_ids.insert(folder.id.clone());
-                        queue.push_back(Some(folder.id.clone()));
-                    }
-                    Err(e) => {
-                        error!("Failed to create folder {}: {}", folder.id, e);
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn insert_files(
-    tx: &mut Transaction<'_, Sqlite>,
-    files: &[Item],
-    folder_map: &HashMap<Option<String>, Vec<Folder>>,
-) -> sqlx::Result<()>
-{
-    for item in files {
-        if let Item::File(file) = item {
-            if !folder_map.values().flatten().any(|folder| &folder.id == &file.parent) {
-                warn!(
-                    "Parent folder ID {} not found for new file ID {}, skipping insertion",
-                    file.parent,
-                    file.id
-                );
-                continue;
-            }
-            match file.create(tx).await {
-                Ok(_) => {
-                    trace!("Created file: {}", file.id);
-                }
-                Err(e) => {
-                    error!("Failed to create file {}: {}", file.id, e);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 
 pub async fn get_drive(drive_id: &str, pool: &Pool) -> sqlx::Result<Option<Drive>> {
     Drive::get_by_id(drive_id, pool).await
