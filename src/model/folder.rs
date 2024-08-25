@@ -55,12 +55,14 @@ impl Folder {
     pub(crate) async fn upsert(&self, conn: &mut Connection) -> Result<()> {
         sqlx::query!(
             "
-             UPDATE folders
-        SET
-            name = $3,
-            trashed = $4,
-            parent = $5
-        WHERE id = $1 AND drive_id = $2
+            INSERT INTO folders
+                (id, drive_id, name, trashed, parent)
+            VALUES
+                ($1, $2, $3, $4, $5)
+            ON CONFLICT (id, drive_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                trashed = EXCLUDED.trashed,
+                parent = EXCLUDED.parent
             ",
             self.id,
             self.drive_id,
@@ -87,6 +89,34 @@ impl Folder {
         trace!(id = %id, "deleted folder");
         Ok(())
     }
+
+    pub async fn get_children(
+        parent_id: &str,
+        drive_id: &str,
+        conn: &mut Connection,
+    ) -> Result<Option<Vec<String>>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id
+            FROM folders
+            WHERE parent = $1 AND drive_id = $2
+            "#,
+            parent_id,
+            drive_id
+        )
+            .fetch_all(conn)
+            .await?;
+
+        if rows.is_empty() {
+            trace!(parent_id = %parent_id, drive_id = %drive_id, "no children found for folder");
+            Ok(None)
+        } else {
+            let children: Vec<String> = rows.into_iter().map(|row| row.id).collect();
+            trace!(parent_id = %parent_id, drive_id = %drive_id, count = %children.len(), "fetched children for folder");
+            Ok(Some(children))
+        }
+    }
+
 
     pub(crate) async fn update_name(
         id: &str,

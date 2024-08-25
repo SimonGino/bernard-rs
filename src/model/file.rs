@@ -40,28 +40,30 @@ impl File {
     }
     pub(crate) async fn upsert(&self, conn: &mut Connection) -> Result<()> {
         sqlx::query!(
-        "
-        UPDATE files
-        SET
-            name = $3,
-            trashed = $4,
-            parent = $5,
-            md5 = $6,
-            size = $7
-        WHERE id = $1 AND drive_id = $2
-        ",
-        self.id,
-        self.drive_id,
-        self.name,
-        self.trashed,
-        self.parent,
-        self.md5,
-        self.size
-    )
+            "
+            INSERT INTO files
+                (id, drive_id, name, trashed, parent, md5, size)
+            VALUES
+                ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (id, drive_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                trashed = EXCLUDED.trashed,
+                parent = EXCLUDED.parent,
+                md5 = EXCLUDED.md5,
+                size = EXCLUDED.size
+            ",
+            self.id,
+            self.drive_id,
+            self.name,
+            self.trashed,
+            self.parent,
+            self.md5,
+            self.size
+        )
             .execute(conn)
             .await?;
 
-        trace!(id = %self.id, "updated file");
+        trace!(id = %self.id, "upserted file");
         Ok(())
     }
 

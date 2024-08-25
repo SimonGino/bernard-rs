@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::database::Pool;
@@ -96,15 +97,22 @@ impl From<PathChangelog> for ChangedPath {
 
 impl ChangedPath {
     pub(crate) async fn get_all(drive_id: &str, pool: &Pool) -> sqlx::Result<Vec<Self>> {
-        // TODO: SQLx appears to have a bug with Recursive CTEs (even if it's just a view).
-        // Therefore this query is not checked.
-        // Maybe open an issue or investigate what goes wrong?
-        sqlx::query_as::<_, PathChangelog>("SELECT * FROM path_changelog WHERE drive_id = $1")
+        let path_changelogs: Vec<PathChangelog> = sqlx::query_as::<_, PathChangelog>(
+            "SELECT * FROM path_changelog WHERE drive_id = $1"
+        )
             .bind(drive_id)
-            .fetch(pool)
-            // Turn the PathChangelog into a ChangedPath
-            .map_ok(|f| f.into())
-            .try_collect()
-            .await
+            .fetch_all(pool)
+            .await?;
+
+        // 使用 HashMap 来去除重复项，保留最新的变更
+        let mut unique_changes: HashMap<String, PathChangelog> = HashMap::new();
+        for changelog in path_changelogs {
+            unique_changes.insert(changelog.path.clone(), changelog);
+        }
+
+        // 转换为 ChangedPath 并收集结果
+        Ok(unique_changes.into_values()
+            .map(|p| p.into())
+            .collect())
     }
 }
