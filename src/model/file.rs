@@ -1,7 +1,7 @@
 use crate::database::{Connection, Pool};
 use futures::prelude::*;
 use sqlx::Result;
-use tracing::{trace};
+use tracing::trace;
 
 #[derive(Debug)]
 pub struct File {
@@ -31,8 +31,8 @@ impl File {
             self.md5,
             self.size
         )
-            .execute(conn)
-            .await?;
+        .execute(conn)
+        .await?;
 
         trace!(id = %self.id, "created file");
         Ok(())
@@ -59,8 +59,8 @@ impl File {
             self.md5,
             self.size
         )
-            .execute(conn)
-            .await?;
+        .execute(conn)
+        .await?;
 
         trace!(id = %self.id, "upserted file");
         Ok(())
@@ -72,8 +72,8 @@ impl File {
             id,
             drive_id
         )
-            .execute(conn)
-            .await?;
+        .execute(conn)
+        .await?;
 
         trace!(id = %id, "deleted file");
         Ok(())
@@ -132,11 +132,11 @@ impl ChangedFile {
             "SELECT * FROM file_changelog WHERE drive_id = $1",
             drive_id
         )
-            .fetch(pool)
-            // Turn the FileChangelog into a ChangedFile
-            .map_ok(|f| f.into())
-            .try_collect()
-            .await
+        .fetch(pool)
+        // Turn the FileChangelog into a ChangedFile
+        .map_ok(|f| f.into())
+        .try_collect()
+        .await
     }
 
     pub(crate) async fn clear(drive_id: &str, pool: &Pool) -> Result<()> {

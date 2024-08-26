@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
 use crate::fetch::{Change, Item};
 use crate::model::{ChangedFile, ChangedFolder, ChangedPath, Drive, File, Folder};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection, SqlitePool, SqlitePoolOptions};
+use std::collections::{HashMap, HashSet};
 use tracing::{error, trace, warn};
 
 pub(crate) type Connection = SqliteConnection;
@@ -28,16 +28,6 @@ pub async fn clear_changelog(drive_id: &str, pool: &Pool) -> sqlx::Result<()> {
     Ok(())
 }
 
-fn item_to_change(drive_id: &str, item: Item) -> Change {
-    match item.drive_id() == drive_id {
-        true => Change::ItemChanged(item),
-        false => {
-            trace!("moved to another shared drive, marked as removed");
-            Change::ItemRemoved(item.into_id())
-        }
-    }
-}
-
 #[tracing::instrument(level = "debug", skip(changes, pool))]
 pub async fn merge_changes<I>(
     drive_id: &str,
@@ -50,10 +40,10 @@ where
 {
     let mut tx = pool.begin().await?;
 
-    // 更新 page_token
+    // Update the page token
     Drive::update_page_token(drive_id, page_token, &mut tx).await?;
 
-    // 收集所有变更
+    // Collect all changes
     let mut folder_changes: HashMap<String, FolderChange> = HashMap::new();
     let mut file_changes: HashMap<String, FileChange> = HashMap::new();
 
@@ -62,12 +52,27 @@ where
             Change::DriveChanged(drive) => {
                 Folder::update_name(drive_id, drive_id, &drive.name, &mut tx).await?;
             }
-            Change::DriveRemoved(_) => (), // 忽略，因为我们正在处理这个驱动器
-            Change::ItemChanged(Item::Folder(folder)) => {
-                folder_changes.insert(folder.id.clone(), FolderChange::Update(folder));
-            }
-            Change::ItemChanged(Item::File(file)) => {
-                file_changes.insert(file.id.clone(), FileChange::Update(file));
+            Change::DriveRemoved(_) => (), // Ignore, as we're processing this drive
+            Change::ItemChanged(item) => {
+                // Integrate item_to_change logic
+                if item.drive_id() == drive_id {
+                    match item {
+                        Item::Folder(folder) => {
+                            folder_changes.insert(folder.id.clone(), FolderChange::Update(folder));
+                        }
+                        Item::File(file) => {
+                            file_changes.insert(file.id.clone(), FileChange::Update(file));
+                        }
+                    }
+                } else {
+                    trace!("moved to another shared drive, marked as removed");
+                    let id = item.into_id();
+                    if !file_changes.contains_key(&id) {
+                        folder_changes.insert(id.clone(), FolderChange::Remove);
+                    } else {
+                        file_changes.insert(id, FileChange::Remove);
+                    }
+                }
             }
             Change::ItemRemoved(id) => {
                 if !file_changes.contains_key(&id) {
@@ -79,20 +84,20 @@ where
         }
     }
 
-    // 处理文件夹变更
+    // Process folder changes
     for (folder_id, change) in folder_changes {
         match change {
             FolderChange::Update(folder) => {
                 folder.upsert(&mut tx).await?;
             }
             FolderChange::Remove => {
-                // 级联删除会处理子项目
+                // Cascade delete will handle child items
                 Folder::delete(&folder_id, drive_id, &mut tx).await?;
             }
         }
     }
 
-    // 处理文件变更
+    // Process file changes
     for (file_id, change) in file_changes {
         match change {
             FileChange::Update(file) => {
@@ -124,8 +129,7 @@ pub async fn add_drive(
     page_token: &str,
     items: impl IntoIterator<Item = Item>,
     pool: &Pool,
-) -> sqlx::Result<()>
-{
+) -> sqlx::Result<()> {
     let mut tx = pool.begin().await?;
 
     // Create the drive
@@ -149,7 +153,7 @@ pub async fn add_drive(
         match item {
             Item::Folder(folder) => {
                 folders.insert(folder.id.clone(), folder);
-            },
+            }
             Item::File(file) => {
                 files.push(file);
             }
@@ -175,12 +179,12 @@ pub async fn add_drive(
             }
         }
 
-        // 移除已处理的文件夹
+        // Remove processed folders
         for id in &folders_to_remove {
             folders.remove(id);
         }
 
-        // 如果没有进展，那么剩下的都是孤立文件夹
+        // If no progress, remaining folders are orphaned
         if !progress {
             orphaned_folders.extend(folders.keys().cloned());
             break;
@@ -192,13 +196,15 @@ pub async fn add_drive(
         warn!("Continuing processing despite orphaned folders");
     }
 
-
     // Process files
     for file in files {
         if processed_folders.contains(&file.parent) {
             file.create(&mut tx).await?;
         } else {
-            warn!("Parent folder {} not found for file {}, skipping", file.parent, file.id);
+            warn!(
+                "Parent folder {} not found for file {}, skipping",
+                file.parent, file.id
+            );
         }
     }
 

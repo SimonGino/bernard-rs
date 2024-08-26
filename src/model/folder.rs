@@ -1,7 +1,7 @@
 use crate::database::{Connection, Pool};
 use futures::prelude::*;
 use sqlx::Result;
-use tracing::{trace};
+use tracing::trace;
 
 #[derive(Debug)]
 pub struct Folder {
@@ -27,8 +27,8 @@ impl Folder {
             self.trashed,
             self.parent,
         )
-            .execute(conn)
-            .await?;
+        .execute(conn)
+        .await?;
 
         trace!(id = %self.id, "created folder");
         Ok(())
@@ -52,8 +52,8 @@ impl Folder {
             self.trashed,
             self.parent,
         )
-            .execute(conn)
-            .await?;
+        .execute(conn)
+        .await?;
 
         trace!(id = %self.id, "upserted folder");
         Ok(())
@@ -65,8 +65,8 @@ impl Folder {
             id,
             drive_id
         )
-            .execute(conn)
-            .await?;
+        .execute(conn)
+        .await?;
 
         trace!(id = %id, "deleted folder");
         Ok(())
@@ -86,8 +86,8 @@ impl Folder {
             parent_id,
             drive_id
         )
-            .fetch_all(conn)
-            .await?;
+        .fetch_all(conn)
+        .await?;
 
         if rows.is_empty() {
             trace!(parent_id = %parent_id, drive_id = %drive_id, "no children found for folder");
@@ -98,7 +98,6 @@ impl Folder {
             Ok(Some(children))
         }
     }
-
 
     pub(crate) async fn update_name(
         id: &str,
@@ -112,13 +111,12 @@ impl Folder {
             drive_id,
             name
         )
-            .execute(conn)
-            .await?;
+        .execute(conn)
+        .await?;
 
         trace!(id = %id, "updated folder name to {}", name);
         Ok(())
     }
-
 }
 
 #[derive(Debug)]
@@ -169,11 +167,11 @@ impl ChangedFolder {
             "SELECT * FROM folder_changelog WHERE drive_id = $1",
             drive_id
         )
-            .fetch(pool)
-            // Turn the FolderChangelog into a ChangedFolder
-            .map_ok(|f| f.into())
-            .try_collect()
-            .await
+        .fetch(pool)
+        // Turn the FolderChangelog into a ChangedFolder
+        .map_ok(|f| f.into())
+        .try_collect()
+        .await
     }
 
     pub(crate) async fn clear(drive_id: &str, pool: &Pool) -> Result<()> {
