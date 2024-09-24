@@ -14,7 +14,7 @@ pub struct Folder {
 
 impl Folder {
     pub(crate) async fn create(&self, conn: &mut Connection) -> Result<()> {
-        sqlx::query!(
+        match sqlx::query!(
             "
             INSERT INTO folders
                 (id, drive_id, name, trashed, parent)
@@ -28,14 +28,21 @@ impl Folder {
             self.parent,
         )
         .execute(conn)
-        .await?;
-
-        trace!(id = %self.id, "created folder");
-        Ok(())
+        .await
+        {
+            Ok(_) => {
+                trace!(id = %self.id, "created folder");
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("创建文件夹失败: {}", e);
+                Err(e)
+            }
+        }
     }
 
     pub(crate) async fn upsert(&self, conn: &mut Connection) -> Result<()> {
-        sqlx::query!(
+        match sqlx::query!(
             "
             INSERT INTO folders
                 (id, drive_id, name, trashed, parent)
@@ -53,23 +60,37 @@ impl Folder {
             self.parent,
         )
         .execute(conn)
-        .await?;
-
-        trace!(id = %self.id, "upserted folder");
-        Ok(())
+        .await
+        {
+            Ok(_) => {
+                trace!(id = %self.id, "upserted folder");
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("更新文件夹失败: {}", e);
+                Err(e)
+            }
+        }
     }
 
     pub(crate) async fn delete(id: &str, drive_id: &str, conn: &mut Connection) -> Result<()> {
-        sqlx::query!(
+        match sqlx::query!(
             "DELETE FROM folders WHERE id = $1 AND drive_id = $2",
             id,
             drive_id
         )
         .execute(conn)
-        .await?;
-
-        trace!(id = %id, "deleted folder");
-        Ok(())
+        .await
+        {
+            Ok(_) => {
+                trace!(id = %id, "deleted folder");
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("删除文件夹失败: {}", e);
+                Err(e)
+            }
+        }
     }
 
     pub async fn get_children(
@@ -77,7 +98,7 @@ impl Folder {
         drive_id: &str,
         conn: &mut Connection,
     ) -> Result<Option<Vec<String>>> {
-        let rows = sqlx::query!(
+        match sqlx::query!(
             r#"
             SELECT id
             FROM folders
@@ -87,15 +108,22 @@ impl Folder {
             drive_id
         )
         .fetch_all(conn)
-        .await?;
-
-        if rows.is_empty() {
-            trace!(parent_id = %parent_id, drive_id = %drive_id, "no children found for folder");
-            Ok(None)
-        } else {
-            let children: Vec<String> = rows.into_iter().map(|row| row.id).collect();
-            trace!(parent_id = %parent_id, drive_id = %drive_id, count = %children.len(), "fetched children for folder");
-            Ok(Some(children))
+        .await
+        {
+            Ok(rows) => {
+                if rows.is_empty() {
+                    trace!(parent_id = %parent_id, drive_id = %drive_id, "no children found for folder");
+                    Ok(None)
+                } else {
+                    let children: Vec<String> = rows.into_iter().map(|row| row.id).collect();
+                    trace!(parent_id = %parent_id, drive_id = %drive_id, count = %children.len(), "fetched children for folder");
+                    Ok(Some(children))
+                }
+            },
+            Err(e) => {
+                tracing::warn!("获取文件夹子项失败: {}", e);
+                Err(e)
+            }
         }
     }
 
@@ -105,17 +133,24 @@ impl Folder {
         name: &str,
         conn: &mut Connection,
     ) -> Result<()> {
-        sqlx::query!(
+        match sqlx::query!(
             "UPDATE folders SET name = $3 WHERE id = $1 AND drive_id = $2",
             id,
             drive_id,
             name
         )
         .execute(conn)
-        .await?;
-
-        trace!(id = %id, "updated folder name to {}", name);
-        Ok(())
+        .await
+        {
+            Ok(_) => {
+                trace!(id = %id, "updated folder name to {}", name);
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("更新文件夹名称失败: {}", e);
+                Err(e)
+            }
+        }
     }
 }
 
@@ -162,7 +197,7 @@ impl From<FolderChangelog> for ChangedFolder {
 
 impl ChangedFolder {
     pub(crate) async fn get_all(drive_id: &str, pool: &Pool) -> Result<Vec<Self>> {
-        sqlx::query_as!(
+        match sqlx::query_as!(
             FolderChangelog,
             "SELECT * FROM folder_changelog WHERE drive_id = $1",
             drive_id
@@ -172,14 +207,28 @@ impl ChangedFolder {
         .map_ok(|f| f.into())
         .try_collect()
         .await
+        {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                tracing::warn!("获取文件夹变更日志失败: {}", e);
+                Err(e)
+            }
+        }
     }
 
     pub(crate) async fn clear(drive_id: &str, pool: &Pool) -> Result<()> {
-        sqlx::query!("DELETE FROM folder_changelog WHERE drive_id = $1", drive_id)
+        match sqlx::query!("DELETE FROM folder_changelog WHERE drive_id = $1", drive_id)
             .execute(pool)
-            .await?;
-
-        trace!("cleared folder changelog");
-        Ok(())
+            .await
+        {
+            Ok(_) => {
+                trace!("cleared folder changelog");
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("清除文件夹变更日志失败: {}", e);
+                Err(e)
+            }
+        }
     }
 }

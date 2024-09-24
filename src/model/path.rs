@@ -97,12 +97,19 @@ impl From<PathChangelog> for ChangedPath {
 
 impl ChangedPath {
     pub(crate) async fn get_all(drive_id: &str, pool: &Pool) -> sqlx::Result<Vec<Self>> {
-        let path_changelogs: Vec<PathChangelog> = sqlx::query_as::<_, PathChangelog>(
+        let path_changelogs: Vec<PathChangelog> = match sqlx::query_as::<_, PathChangelog>(
             "SELECT * FROM path_changelog WHERE drive_id = $1"
         )
             .bind(drive_id)
             .fetch_all(pool)
-            .await?;
+            .await
+        {
+            Ok(changelogs) => changelogs,
+            Err(e) => {
+                tracing::warn!("获取路径变更日志失败: {}", e);
+                return Err(e);
+            }
+        };
 
         // 使用 HashMap 来去除重复项，保留最新的变更
         let mut unique_changes: HashMap<String, PathChangelog> = HashMap::new();

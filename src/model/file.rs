@@ -16,7 +16,7 @@ pub struct File {
 
 impl File {
     pub(crate) async fn create(&self, conn: &mut Connection) -> Result<()> {
-        sqlx::query!(
+        match sqlx::query!(
             "
             INSERT INTO files
                 (id, drive_id, name, trashed, parent, md5, size)
@@ -32,13 +32,20 @@ impl File {
             self.size
         )
         .execute(conn)
-        .await?;
-
-        trace!(id = %self.id, "created file");
-        Ok(())
+        .await
+        {
+            Ok(_) => {
+                trace!(id = %self.id, "created file");
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("创建文件失败: {}", e);
+                Err(e)
+            }
+        }
     }
     pub(crate) async fn upsert(&self, conn: &mut Connection) -> Result<()> {
-        sqlx::query!(
+        match sqlx::query!(
             "
             INSERT INTO files
                 (id, drive_id, name, trashed, parent, md5, size)
@@ -60,23 +67,37 @@ impl File {
             self.size
         )
         .execute(conn)
-        .await?;
-
-        trace!(id = %self.id, "upserted file");
-        Ok(())
+        .await
+        {
+            Ok(_) => {
+                trace!(id = %self.id, "upserted file");
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("更新文件失败: {}", e);
+                Err(e)
+            }
+        }
     }
 
     pub(crate) async fn delete(id: &str, drive_id: &str, conn: &mut Connection) -> Result<()> {
-        sqlx::query!(
+        match sqlx::query!(
             "DELETE FROM files WHERE id = $1 AND drive_id = $2",
             id,
             drive_id
         )
         .execute(conn)
-        .await?;
-
-        trace!(id = %id, "deleted file");
-        Ok(())
+        .await
+        {
+            Ok(_) => {
+                trace!(id = %id, "deleted file");
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("删除文件失败: {}", e);
+                Err(e)
+            }
+        }
     }
 }
 
@@ -127,7 +148,7 @@ impl From<FileChangelog> for ChangedFile {
 
 impl ChangedFile {
     pub(crate) async fn get_all(drive_id: &str, pool: &Pool) -> Result<Vec<Self>> {
-        sqlx::query_as!(
+        match sqlx::query_as!(
             FileChangelog,
             "SELECT * FROM file_changelog WHERE drive_id = $1",
             drive_id
@@ -137,14 +158,28 @@ impl ChangedFile {
         .map_ok(|f| f.into())
         .try_collect()
         .await
+        {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                tracing::warn!("获取文件变更日志失败: {}", e);
+                Err(e)
+            }
+        }
     }
 
     pub(crate) async fn clear(drive_id: &str, pool: &Pool) -> Result<()> {
-        sqlx::query!("DELETE FROM file_changelog WHERE drive_id = $1", drive_id)
+        match sqlx::query!("DELETE FROM file_changelog WHERE drive_id = $1", drive_id)
             .execute(pool)
-            .await?;
-
-        trace!("cleared file changelog");
-        Ok(())
+            .await
+        {
+            Ok(_) => {
+                trace!("cleared file changelog");
+                Ok(())
+            },
+            Err(e) => {
+                tracing::warn!("清除文件变更日志失败: {}", e);
+                Err(e)
+            }
+        }
     }
 }
