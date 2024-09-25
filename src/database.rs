@@ -85,14 +85,14 @@ where
     }
 
     // Process folder changes
+    let mut folders_to_delete = Vec::new();
     for (folder_id, change) in folder_changes {
         match change {
             FolderChange::Update(folder) => {
                 folder.upsert(&mut tx).await?;
             }
             FolderChange::Remove => {
-                // Cascade delete will handle child items
-                Folder::delete(&folder_id, drive_id, &mut tx).await?;
+                folders_to_delete.push(folder_id);
             }
         }
     }
@@ -107,6 +107,22 @@ where
                 File::delete(&file_id, drive_id, &mut tx).await?;
             }
         }
+    }
+
+    // Delete Folder (starting from the leaf nodes) 
+    while !folders_to_delete.is_empty() {
+        let mut next_folders_to_delete = Vec::new();
+        for folder_id in folders_to_delete {
+            match Folder::get_children(&folder_id, drive_id, &mut tx).await? {
+                Some(children) if !children.is_empty() => {
+                    next_folders_to_delete.push(folder_id);
+                }
+                _ => {
+                    Folder::delete(&folder_id, drive_id, &mut tx).await?;
+                }
+            }
+        }
+        folders_to_delete = next_folders_to_delete;
     }
 
     tx.commit().await
